@@ -1,7 +1,7 @@
 {
   "name": "salem-media-backend",
   "version": "1.0.0",
-  "description": "السيرفر الخلفي الآمن لتطبيق سالم ميديا باستخدام Node.js و Express و Gemini API",
+  "description": "السيرفر الخلفي الآمن لتطبيق سالم ميديا",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
