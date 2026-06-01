@@ -4,7 +4,7 @@ const cors = require('cors');
 require('dotenv').config();
 
 // استخدام مكتبة غوغل الرسمية للذكاء الاصطناعي
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,7 +22,7 @@ if (!apiKey) {
 }
 
 // تهيئة مكتبة غوغل للذكاء الاصطناعي بالمفتاح الآمن
-const ai = new GoogleGenAI({ apiKey: apiKey });
+const ai = new GoogleGenerativeAI(apiKey);
 
 // 🛣️ المسار الأساسي لاستقبال طلبات الذكاء الاصطناعي النصية
 app.post('/api/generate', async (req, res) => {
