@@ -1,70 +1,30 @@
-// تثبيت المكتبات الأساسية
 const express = require('express');
 const cors = require('cors');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
-// استخدام مكتبة غوغل الرسمية للذكاء الاصطناعي
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// تفعيل بروتوكول الـ CORS للسماح بتطبيق الويب بالتواصل مع السيرفر
 app.use(cors());
 app.use(express.json());
 
-// قراءة مفتاح الـ API من ملف البيئة الآمن .env
 const apiKey = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(apiKey);
 
-if (!apiKey) {
-    console.error("❌ خطأ جوهري: لم يتم العثور على مفتاح GEMINI_API_KEY في ملف الـ .env!");
-    process.exit(1);
-}
-
-// تهيئة مكتبة غوغل للذكاء الاصطناعي بالمفتاح الآمن
-const ai = new GoogleGenerativeAI(apiKey);
-
-// 🛣️ المسار الأساسي لاستقبال طلبات الذكاء الاصطناعي النصية
 app.post('/api/generate', async (req, res) => {
     try {
-        const { contents, systemInstruction } = req.body;
-
-        if (!contents || !contents[0] || !contents[0].parts || !contents[0].parts[0].text) {
-            return res.status(400).json({ error: "الطلب غير مكتمل أو النص فارغ!" });
-        }
-
-        const promptText = contents[0].parts[0].text;
-        const systemPrompt = systemInstruction?.parts?.[0]?.text || "أنت خبير تسويق رقمي وصناعة محتوى محترف لوكالة سالم ميديا.";
-
-        // استدعاء موديل gemini-1.5-flash رسمياً وبثبات
-        const response = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: promptText,
-            config: {
-                systemInstruction: systemPrompt
-            }
-        });
-
-        // إرجاع النتيجة لتطبيق الويب بنفس البنية المتوقعة
-        res.json({
-            candidates: [
-                {
-                    content: {
-                        parts: [
-                            { text: response.text }
-                        ]
-                    }
-                }
-            ]
-        });
-
+        const { prompt } = req.body;
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+        res.json({ text });
     } catch (error) {
-        console.error("💥 حدث خطأ في السيرفر أثناء توليد المحتوى:", error);
-        res.status(500).json({ error: "فشل السيرفر في معالجة طلب الذكاء الاصطناعي" });
+        console.error("Error:", error);
+        res.status(500).json({ error: "Failed to generate content" });
     }
 });
 
-// تشغيل السيرفر على المنفذ المحدد
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`🚀 السيرفر الآمن يعمل بنجاح على المنفذ ${PORT}`);
 });
