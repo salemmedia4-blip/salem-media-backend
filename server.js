@@ -48,22 +48,55 @@ app.post('/api/generate', async (req, res) => {
         return res.status(500).json({ error: "مفتاح الـ API غير مهيأ في السيرفر السحابي رندر." });
     }
 
-    try {
-        // تحديد الموديل المطلوب ديناميكياً أو استخدام الموديل الافتراضي المستقر
-        const targetModel = model || 'gemini-2.5-flash-preview-09-2025';
-        
-        console.log(`📡 جاري الاتصال بموديل الذكاء الاصطناعي: ${targetModel}`);
-        
-        const response = await ai.models.generateContent({
-            model: targetModel,
-            contents: promptText,
-        });
+    // مصفوفة الموديلات البديلة بالترتيب في حال حدوث ضغط عالي (خطأ 503)
+    const fallbackModels = [
+        model || 'gemini-2.5-flash',
+        'gemini-2.5-flash-preview-09-2025',
+        'gemini-1.5-flash'
+    ];
 
-        res.json({ text: response.text });
-    } catch (error) {
-        console.error("❌ خطأ داخلي في معالجة طلب السيرفر:", error);
-        res.status(500).json({ error: error.message || "حدث خطأ غير متوقع أثناء توليد النص." });
+    // إزالة التكرار لضمان كفاءة الفحص
+    const uniqueModels = [...new Set(fallbackModels)];
+    let lastError = null;
+
+    // محاولة إرسال الطلب للموديلات المتوفرة بالتدريج عند الفشل
+    for (const targetModel of uniqueModels) {
+        try {
+            console.log(`📡 جاري محاولة الاتصال بموديل: ${targetModel}`);
+            const response = await ai.models.generateContent({
+                model: targetModel,
+                contents: promptText,
+            });
+
+            // إذا نجح الطلب، نقوم بإرجاعه فوراً وإيقاف المحاولات الأخرى
+            console.log(`✅ تم التوليد بنجاح باستخدام الموديل: ${targetModel}`);
+            return res.json({ text: response.text });
+
+        } catch (error) {
+            console.warn(`⚠️ الموديل ${targetModel} غير متوفر حالياً بسبب الضغط العالي. جاري الانتقال للبديل...`);
+            lastError = error;
+            
+            // التحقق من طبيعة الخطأ (هل هو 503 أو ضغط عالي؟) للمتابعة
+            const errorStr = JSON.stringify(error);
+            const isTemporaryError = errorStr.includes("503") || 
+                                     errorStr.includes("UNAVAILABLE") || 
+                                     errorStr.includes("temporary") || 
+                                     errorStr.includes("429") ||
+                                     errorStr.includes("high demand");
+
+            if (isTemporaryError) {
+                continue; // الانتقال للموديل التالي في المصفوفة فوراً
+            } else {
+                break; // إذا كان خطأ برمجي آخر، أوقف المحاولات واعرضه للمستخدم
+            }
+        }
     }
+
+    // إذا فشلت كافة الموديلات البديلة
+    console.error("❌ فشلت كافة الموديلات البديلة في تلبية الطلب:", lastError);
+    res.status(503).json({ 
+        error: "جميع موديلات الخدمة تشهد ضغطاً عالياً مؤقتاً في خوادم Google. يرجى إعادة المحاولة بعد ثوانٍ قليلة." 
+    });
 });
 
 // 2. منفذ الوسيط الآمن (Secure Proxy) لتوليد الصور والمميزات المتقدمة
@@ -80,8 +113,6 @@ app.post('/api/secure-proxy', async (req, res) => {
 
     try {
         console.log(`🔗 جاري إعادة توجيه الطلب الآمن إلى: ${endpoint}`);
-        
-        // إلحاق المفتاح السحابي بشكل مخفي تماماً عن واجهة المستخدم
         const targetUrl = `${endpoint}?key=${apiKey}`;
 
         const response = await fetch(targetUrl, {
@@ -107,5 +138,5 @@ app.post('/api/secure-proxy', async (req, res) => {
 
 // تشغيل السيرفر والاستماع للطلبات الواردة
 app.listen(PORT, () => {
-    console.log(`🚀 السيرفر يعمل بنجاح وكفاءة على المنفذ: ${PORT}`);
+    console.log(`🚀 السيرفر المحدث والآمن يعمل بكفاءة على المنفذ: ${PORT}`);
 });
