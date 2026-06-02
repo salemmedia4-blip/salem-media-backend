@@ -26,12 +26,25 @@ if (apiKey) {
     console.warn("⚠️ تنبيه: لم يتم العثور على المفتاح GEMINI_API_KEY في إعدادات Render.");
 }
 
-// 1. منفذ توليد النصوص الأساسي (Gemini Text Generation)
+// 1. منفذ توليد النصوص الأساسي (Gemini Text Generation) - يدعم المدخلات المتنوعة بشكل مرن
 app.post('/api/generate', async (req, res) => {
-    const { prompt, model } = req.body;
+    const { prompt, contents, systemInstruction, model } = req.body;
 
-    if (!prompt) {
-        return res.status(400).json({ error: "الرجاء إدخال النص المطلوب (Prompt)" });
+    // استخراج المحتوى والتحقق من وجوده بمرونة عالية (يدعم الاستقبال النصي أو المهيكل)
+    let finalContents = contents || prompt;
+
+    // تهيئة نص السجل للطباعة والتتبع
+    let logPromptText = "";
+    if (typeof finalContents === 'string') {
+        logPromptText = finalContents;
+    } else if (Array.isArray(finalContents) && finalContents[0]?.parts?.[0]?.text) {
+        logPromptText = finalContents[0].parts[0].text;
+    } else if (prompt) {
+        logPromptText = prompt;
+    }
+
+    if (!finalContents) {
+        return res.status(400).json({ error: "الرجاء إدخال النص المطلوب (Prompt) أو المحتوى (contents)" });
     }
 
     if (!ai) {
@@ -43,10 +56,18 @@ app.post('/api/generate', async (req, res) => {
         const targetModel = model || 'gemini-2.5-flash-preview-09-2025';
         
         console.log(`📡 جاري الاتصال بموديل الذكاء الاصطناعي: ${targetModel}`);
+        console.log(`💬 نص الطلب الوارد: "${logPromptText.substring(0, 60)}..."`);
         
+        // بناء هيكلية الإعدادات البرمجية لتمرير التعليمات الإرشادية الخاصة بالمدرب
+        const config = {};
+        if (systemInstruction) {
+            config.systemInstruction = systemInstruction;
+        }
+
         const response = await ai.models.generateContent({
             model: targetModel,
-            contents: prompt,
+            contents: finalContents,
+            config: config
         });
 
         res.json({ text: response.text });
@@ -99,3 +120,7 @@ app.post('/api/secure-proxy', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 السيرفر يعمل بنجاح وكفاءة على المنفذ: ${PORT}`);
 });
+```
+eof
+
+```html:سالم ميديا | المنصة التسويقية الاحترافية V7.5:creative_mindset_app.html
