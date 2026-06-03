@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 // تفعيل سياسة الـ CORS لضمان اتصال تطبيقك بالسيرفر بدون أي قيود
 app.use(cors({
     origin: '*', 
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -28,7 +28,7 @@ if (apiKey) {
 
 // 1. منفذ توليد النصوص الأساسي (Gemini Text Generation)
 app.post('/api/generate', async (req, res) => {
-    let { prompt, contents, model } = req.body;
+    let { prompt, contents, model, systemInstruction } = req.body;
 
     // استخراج النص بذكاء سواء تم إرساله كـ prompt مباشر أو داخل مصفوفة contents
     let promptText = prompt;
@@ -40,63 +40,93 @@ app.post('/api/generate', async (req, res) => {
         }
     }
 
-    if (!promptText) {
+    if (!promptText && !contents) {
         return res.status(400).json({ error: "الرجاء إدخال النص المطلوب (Prompt)" });
     }
 
     if (!ai) {
-        return res.status(500).json({ error: "مفتاح الـ API غير مهيأ في السيرفر السحابي رندر." });
+        return res.status(500).json({ error: "مفتاح الـ API غير مهيأ في السيرفر السحابي رندر. يرجى إضافته في إعدادات البيئة لـ Render باسم GEMINI_API_KEY." });
     }
 
-    // مصفوفة الموديلات البديلة بالترتيب في حال حدوث ضغط عالي (خطأ 503)
+    // مصفوفة الموديلات البديلة بالترتيب في حال حدوث ضغط عالي أو مشاكل مؤقتة
     const fallbackModels = [
         model || 'gemini-2.5-flash',
-        'gemini-2.5-flash-preview-09-2025',
         'gemini-1.5-flash'
     ];
 
-    // إزالة التكرار لضمان كفاءة الفحص
     const uniqueModels = [...new Set(fallbackModels)];
     let lastError = null;
+    let success = false;
+    let generatedResponseText = "";
 
-    // محاولة إرسال الطلب للموديلات المتوفرة بالتدريج عند الفشل
+    // استخراج وتأمين نظام التعليمات البرمجية الموجهة (System Instruction)
+    let systemInstructionText = "";
+    if (systemInstruction) {
+        if (typeof systemInstruction === 'string') {
+            systemInstructionText = systemInstruction;
+        } else if (systemInstruction.parts && Array.isArray(systemInstruction.parts)) {
+            systemInstructionText = systemInstruction.parts[0]?.text || "";
+        } else if (systemInstruction.text) {
+            systemInstructionText = systemInstruction.text;
+        }
+    }
+
     for (const targetModel of uniqueModels) {
         try {
             console.log(`📡 جاري محاولة الاتصال بموديل: ${targetModel}`);
+            
             const response = await ai.models.generateContent({
                 model: targetModel,
-                contents: promptText,
+                contents: contents || promptText,
+                config: {
+                    systemInstruction: systemInstructionText || undefined
+                }
             });
 
-            // إذا نجح الطلب، نقوم بإرجاعه فوراً وإيقاف المحاولات الأخرى
             console.log(`✅ تم التوليد بنجاح باستخدام الموديل: ${targetModel}`);
-            return res.json({ text: response.text });
+            generatedResponseText = response.text;
+            success = true;
+            break; // الخروج من التكرار عند نجاح الطلب
 
         } catch (error) {
-            console.warn(`⚠️ الموديل ${targetModel} غير متوفر حالياً بسبب الضغط العالي. جاري الانتقال للبديل...`);
+            console.warn(`⚠️ فشل الموديل ${targetModel}. التفاصيل:`, error.message || error);
             lastError = error;
             
-            // التحقق من طبيعة الخطأ (هل هو 503 أو ضغط عالي؟) للمتابعة
-            const errorStr = JSON.stringify(error);
-            const isTemporaryError = errorStr.includes("503") || 
-                                     errorStr.includes("UNAVAILABLE") || 
-                                     errorStr.includes("temporary") || 
-                                     errorStr.includes("429") ||
-                                     errorStr.includes("high demand");
+            // تحقق ما إذا كان الخطأ هو ضغط عالي لتجربة البديل
+            const errorStr = JSON.stringify(error) || "";
+            const isTemporary = errorStr.includes("503") || 
+                                errorStr.includes("UNAVAILABLE") || 
+                                errorStr.includes("429") || 
+                                errorStr.includes("quota") || 
+                                errorStr.includes("Resource has been exhausted");
 
-            if (isTemporaryError) {
-                continue; // الانتقال للموديل التالي في المصفوفة فوراً
+            if (isTemporary) {
+                console.log("🔄 خطأ مؤقت أو متعلق بالحصص، جاري محاولة الانتقال للموديل المستقر التالي...");
+                continue;
             } else {
-                break; // إذا كان خطأ برمجي آخر، أوقف المحاولات واعرضه للمستخدم
+                // خطأ أمني أو برمجي حقيقي، توقف فوراً وأظهره للمستخدم لحله
+                break;
             }
         }
     }
 
-    // إذا فشلت كافة الموديلات البديلة
-    console.error("❌ فشلت كافة الموديلات البديلة في تلبية الطلب:", lastError);
-    res.status(503).json({ 
-        error: "جميع موديلات الخدمة تشهد ضغطاً عالياً مؤقتاً في خوادم Google. يرجى إعادة المحاولة بعد ثوانٍ قليلة." 
-    });
+    if (success) {
+        return res.json({ text: generatedResponseText });
+    }
+
+    // في حال الفشل النهائي، نقوم بإرجاع الخطأ الحقيقي الوارد من غوغل دون تعتيم
+    console.error("❌ فشلت كافة الموديلات في تلبية الطلب. الخطأ الفعلي:", lastError);
+    
+    let detailedErrorMessage = lastError?.message || lastError?.toString() || "فشل الاتصال بخدمات Google AI Studio.";
+    
+    // توضيح للمستخدم في حال كانت المشكلة متعلقة بحدود الاستخدام أو الدفع
+    if (detailedErrorMessage.includes("API key not valid") || detailedErrorMessage.includes("API_KEY_INVALID")) {
+        detailedErrorMessage = "مفتاح الـ API السحابي غير صالح أو تم إيقافه من شركة Google. يرجى تفعيل مفتاح جديد.";
+    } else if (detailedErrorMessage.includes("Resource has been exhausted") || detailedErrorMessage.includes("Quota exceeded")) {
+        detailedErrorMessage = "تم تجاوز حد الاستخدام المجاني المسموح به لليوم. يرجى تفعيل الفوترة لرفع الحظر أو المحاولة لاحقاً.";
+    }
+
+    res.status(500).json({ error: detailedErrorMessage });
 });
 
 // 2. منفذ الوسيط الآمن (Secure Proxy) لتوليد الصور والمميزات المتقدمة
@@ -108,7 +138,7 @@ app.post('/api/secure-proxy', async (req, res) => {
     }
 
     if (!apiKey) {
-        return res.status(500).json({ error: "مفتاح الـ API الخاص بالسيرفر غير مفعّل." });
+        return res.status(500).json({ error: "مفتاح الـ API الخاص بالسيرفر غير مفعّل. يرجى تهيئته في Render." });
     }
 
     try {
@@ -125,7 +155,7 @@ app.post('/api/secure-proxy', async (req, res) => {
             body: payload ? JSON.stringify(payload) : undefined
         });
 
-        // قراءة نوع الاستجابة وتجنب الكراش في حال عدم رجوع JSON من غوغل
+        // قراءة آمنة للاستجابة لتجنب الانهيار البرمجي
         const contentType = response.headers.get("content-type");
         let data;
         if (contentType && contentType.includes("application/json")) {
@@ -136,7 +166,7 @@ app.post('/api/secure-proxy', async (req, res) => {
         }
         
         if (!response.ok) {
-            let errorMsg = "خطأ أثناء الاتصال بالخادم الخارجي.";
+            let errorMsg = "خطأ أثناء الاتصال بالخادم الخارجي للصور.";
             if (data && data.error) {
                 if (typeof data.error === 'string') {
                     errorMsg = data.error;
@@ -156,5 +186,5 @@ app.post('/api/secure-proxy', async (req, res) => {
 
 // تشغيل السيرفر والاستماع للطلبات الواردة
 app.listen(PORT, () => {
-    console.log("🚀 السيرفر يعمل بنجاح وكفاءة على المنفذ: " + PORT);
+    console.log(`🚀 السيرفر يعمل بنجاح وكفاءة على المنفذ: ${PORT}`);
 });
