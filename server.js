@@ -113,6 +113,8 @@ app.post('/api/secure-proxy', async (req, res) => {
 
     try {
         console.log(`🔗 جاري إعادة توجيه الطلب الآمن إلى: ${endpoint}`);
+        
+        // إلحاق المفتاح السحابي بشكل مخفي تماماً عن واجهة المستخدم
         const targetUrl = `${endpoint}?key=${apiKey}`;
 
         const response = await fetch(targetUrl, {
@@ -123,20 +125,36 @@ app.post('/api/secure-proxy', async (req, res) => {
             body: payload ? JSON.stringify(payload) : undefined
         });
 
-        const data = await response.json();
+        // قراءة نوع الاستجابة وتجنب الكراش في حال عدم رجوع JSON من غوغل
+        const contentType = response.headers.get("content-type");
+        let data;
+        if (contentType && contentType.includes("application/json")) {
+            data = await response.json();
+        } else {
+            const text = await response.text();
+            data = { error: text || "استجابة غير معرّفة أو فارغة من الخادم الخارجي." };
+        }
         
         if (!response.ok) {
-            return res.status(response.status).json({ error: data.error || "خطأ أثناء الاتصال بالخادم الخارجي." });
+            let errorMsg = "خطأ أثناء الاتصال بالخادم الخارجي.";
+            if (data && data.error) {
+                if (typeof data.error === 'string') {
+                    errorMsg = data.error;
+                } else if (data.error.message) {
+                    errorMsg = data.error.message;
+                }
+            }
+            return res.status(response.status).json({ error: errorMsg });
         }
 
         res.json(data);
     } catch (error) {
         console.error("❌ خطأ في منفذ الوسيط الآمن:", error);
-        res.status(500).json({ error: "فشل توجيه ومعالجة الطلب الآمن." });
+        res.status(500).json({ error: `فشل توجيه ومعالجة الطلب الآمن. التفاصيل: ${error.message}` });
     }
 });
 
 // تشغيل السيرفر والاستماع للطلبات الواردة
 app.listen(PORT, () => {
-    console.log(`🚀 السيرفر المحدث والآمن يعمل بكفاءة على المنفذ: ${PORT}`);
+    console.log("🚀 السيرفر يعمل بنجاح وكفاءة على المنفذ: " + PORT);
 });
