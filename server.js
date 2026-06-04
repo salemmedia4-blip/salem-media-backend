@@ -5,23 +5,23 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// 1. إعدادات الـ CORS والـ Parser لدعم الاتصال من أي مكان واستقبال الملفات الكبيرة
+// إعدادات الـ CORS والـ Parser لدعم الاتصال من أي جهاز واستقبال البيانات الكبيرة
 app.use(cors({
-    origin: '*', // يسمح لجوالك ولأي متصفح بالاتصال بالسيرفر مباشرة
+    origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json({ limit: '50mb' })); // لدعم البيانات والصور الكبيرة
+app.use(express.json({ limit: '50mb' }));
 
-// جلب مفتاح الـ API الخاص بك المخزن بشكل آمن في بيئة Render
+// جلب مفتاح الـ API الخاص بك من بيئة Render السحابية
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 2. صفحة ترحيبية للتأكد من عمل السيرفر عند الدخول عليه بالمتصفح
+// صفحة ترحيبية للتأكد من عمل السيرفر
 app.get('/', (req, res) => {
-    res.status(200).send('🚀 سيرفر سالم ميديا السحابي يعمل بكفاءة واستقرار تام لعام 2026!');
+    res.status(200).send('🚀 سيرفر سالم ميديا السحابي المطور يعمل بكفاءة واستقرار تام لعام 2026!');
 });
 
-// 3. ممر التوليد النصي الآمن لـ Gemini (لأدوات التسويق والعصف الذهني)
+// 1. ممر التوليد النصي (Gemini 2.5 Flash للأدوات التسويقية والعصف الذهني)
 app.post('/api/generate', async (req, res) => {
     try {
         const apiKey = GEMINI_API_KEY;
@@ -29,7 +29,7 @@ app.post('/api/generate', async (req, res) => {
             return res.status(500).json({ error: "مفتاح الـ API غير معرّف في لوحة تحكم رندر (GEMINI_API_KEY)." });
         }
 
-        const model = req.query.model || "gemini-2.5-flash-preview-09-2025";
+        const model = "gemini-2.5-flash-preview-09-2025";
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
         const response = await fetch(url, {
@@ -50,54 +50,64 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
-// 4. ممر توليد الصور المباشر والآمن لـ Imagen 3.0 (يستقبل فكرتك ويرجع لك كود الصورة Base64 مباشرة)
+// 2. ممر توليد الصور الفوري (متوافق بالكامل وحصري لموديل Imagen 4.0 عبر predict)
 app.post('/api/generate-image', async (req, res) => {
     try {
         const apiKey = GEMINI_API_KEY;
         if (!apiKey) {
-            return res.status(500).json({ error: "مفتاح الـ API غير معرّف في لوحة تحكم رندر (GEMINI_API_KEY)." });
+            return res.status(500).json({ error: "مفتاح الـ API غير معرّف في رندر." });
         }
 
-        const { prompt, model } = req.body;
-        const modelName = "imagen-4-ultra-generate"; //
-        
-        // المسار الرسمي والآمن لطلب الصورة
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:predict?key=${apiKey}`;
+        const { prompt, aspectRatio } = req.body;
+        if (!prompt) {
+            return res.status(400).json({ error: "الموجه الإعلاني (prompt) مطلوب للتوليد." });
+        }
+
+        // استخدام الـ Endpoint الصحيح والمخصص لـ Imagen 4.0 الحصري
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+
+        // صياغة الـ Payload الرسمية والمتوافقة لطلب توليد الصور من غوغل
+        const payload = {
+            instances: [
+                { prompt: prompt }
+            ],
+            parameters: {
+                sampleCount: 1,
+                aspectRatio: aspectRatio || "1:1"
+            }
+        };
 
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                instances: [
-                    { prompt: prompt }
-                ],
-                parameters: {
-                    sampleCount: 1
-                }
-            })
+            body: JSON.stringify(payload)
         });
 
         const data = await response.json();
         if (!response.ok) {
-            return res.status(response.status).json(data);
+            console.error("[Imagen API Error Response]:", data);
+            return res.status(response.status).json({ error: data.error?.message || "فشلت عملية التوليد من جوجل." });
         }
 
-        // استخراج كود الصورة الـ Base64 من استجابة جوجل الرسمية
+        // استخراج كود الصورة الـ Base64 من توقعات الموديل الرسمية
         const base64Image = data.predictions?.[0]?.bytesBase64Encoded;
         if (!base64Image) {
-            return res.status(500).json({ error: "رد خوادم غوغل لا يحتوي على بيانات صورة صالحة." });
+            return res.status(500).json({ error: "استجابة Imagen لا تحتوي على بيانات صورة صالحة." });
         }
 
-        // إرجاع الصورة للواجهة الأمامية لتعرضها فوراً
-        res.json({ imageBase64: base64Image });
+        // نرسل الصورة كبيانات كاملة جاهزة للعرض الفوري في تطبيقك
+        res.json({ 
+            success: true,
+            imageUrl: `data:image/png;base64,${base64Image}`
+        });
 
     } catch (error) {
-        console.error("[Image Gen Error]:", error);
+        console.error("[Imagen Endpoint Error]:", error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// تشغيل السيرفر والاستماع للمنفذ المحدد من رندر
+// تشغيل واستماع السيرفر للطلبات السحابية
 app.listen(PORT, () => {
     console.log(`🚀 Secure Proxy Server is actively running on port ${PORT}`);
 });
