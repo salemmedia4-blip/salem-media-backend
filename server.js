@@ -59,7 +59,7 @@ app.post('/api/generate-image', async (req, res) => {
         }
 
         const { prompt, model } = req.body;
-        const activeModel = model || "imagen-3.0-generate-001";
+        const modelName = "imagen-4-ultra-generate"; //
         
         // المسار الرسمي والآمن لطلب الصورة
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:predict?key=${apiKey}`;
