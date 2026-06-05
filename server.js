@@ -1,3 +1,9 @@
+// ==========================================
+// 🌐 حل مشكلة الـ DNS والـ IPv6 على خوادم Render
+// ==========================================
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first'); // إجبار Node.js على استخدام IPv4 أولاً لمنع ENOTFOUND
+
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
@@ -14,7 +20,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 
 // ==========================================
-// 🛠️ نظام تتبع الطلبات (Debug Mode / Logger)
+// 🛠️ نظام تتبع الطلبات (Debug Mode)
 // ==========================================
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] 🚀 طلب جديد مستلم: ${req.method} ${req.url}`);
@@ -27,7 +33,7 @@ const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 
 // فحص صحة السيرفر
 app.get('/', (req, res) => {
-    res.status(200).send('✅ السيرفر يعمل بكفاءة. نظام التتبع (Debug Mode) مُفعّل.');
+    res.status(200).send('✅ السيرفر يعمل بكفاءة تامة. تم حل مشكلة DNS بنجاح ونظام التتبع مُفعّل.');
 });
 
 // ==========================================
@@ -38,7 +44,7 @@ app.post('/api/generate', async (req, res) => {
     try {
         if (!GEMINI_API_KEY) {
             console.error("❌ خطأ: مفتاح GEMINI_API_KEY غير موجود في Render!");
-            return res.status(401).json({ error: "مفتاح الـ API الخاص بجوجل غير معرّف في السيرفر." });
+            return res.status(401).json({ error: "مفتاح الـ API الخاص بجوجل غير معرّف في السيرفر السحابي لـ Render." });
         }
 
         const model = "gemini-2.5-flash-preview-09-2025";
@@ -95,11 +101,9 @@ app.post('/api/generate-image', async (req, res) => {
             body: JSON.stringify({ inputs: prompt })
         });
 
-        // 🛠️ الإصلاح الجذري: التحقق من نوع الرد (Content-Type)
         const contentType = response.headers.get('content-type');
 
         if (!response.ok) {
-            // إذا كان الخطأ بصيغة JSON (مثل: الموديل يحمل)
             if (contentType && contentType.includes('application/json')) {
                 const errData = await response.json();
                 console.error("❌ [HuggingFace API Error]:", errData);
@@ -109,14 +113,12 @@ app.post('/api/generate-image', async (req, res) => {
                 }
                 return res.status(response.status).json({ error: errData.error || "فشل غير معروف من Hugging Face." });
             } else {
-                // إذا كان الخطأ نصي عادي
                 const errText = await response.text();
                 console.error("❌ [HuggingFace Text Error]:", errText);
                 return res.status(response.status).json({ error: `فشل الاتصال: ${errText}` });
             }
         }
 
-        // ✅ إذا نجح الطلب، نتأكد إنه راجع كصورة (image/jpeg أو image/png)
         if (contentType && (contentType.includes('image/jpeg') || contentType.includes('image/png'))) {
             const arrayBuffer = await response.arrayBuffer();
             const buffer = Buffer.from(arrayBuffer);
@@ -129,7 +131,6 @@ app.post('/api/generate-image', async (req, res) => {
                 imageUrl: `data:${contentType};base64,${base64Image}`
             });
         } else {
-            // إذا رجع شيء غريب مو صورة ولا خطأ معروف
             const weirdData = await response.text();
             console.error("❌ [Unexpected Response]:", weirdData);
             res.status(500).json({ error: "استجابة غير متوقعة من خوادم الرسم." });
