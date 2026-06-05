@@ -66,49 +66,50 @@ app.post('/api/generate-image', async (req, res) => {
         const MODEL_ID = "black-forest-labs/FLUX.1-schnell";
         const url = `https://api-inference.huggingface.co/models/${MODEL_ID}`;
 
+        // إرسال الطلب مع أمر الانتظار الإلزامي لمنع حدوث "fetch failed"
         const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'User-Agent': 'SalemMediaApp/1.0' // لإعلام Hugging Face بأنه اتصال من تطبيق رسمي
             },
             body: JSON.stringify({
                 inputs: prompt,
-                // يمكنك إضافة بارامترات أخرى هنا إذا احتجت
+                options: {
+                    wait_for_model: true // ⚡ الأمر السحري: انتظر استيقاظ الموديل ولا تقطع الاتصال فوراً!
+                }
             })
         });
 
-        // معالجة الأخطاء من Hugging Face (مثل تحميل الموديل أو ضغط السيرفر)
+        // معالجة الأخطاء من Hugging Face
         if (!response.ok) {
             const errorText = await response.text();
             console.error("[HuggingFace API Error]:", errorText);
             
             if (response.status === 503) {
-                 return res.status(503).json({ error: "النموذج قيد التحميل حالياً على خوادم Hugging Face، يرجى المحاولة بعد 30 ثانية." });
+                 return res.status(503).json({ error: "الموديل يستيقظ حالياً على سيرفرات Hugging Face، يرجى تكرار الضغط بعد 10 ثوانٍ." });
             }
-            return res.status(response.status).json({ error: `فشل من خوادم Hugging Face: ${errorText}` });
+            return res.status(response.status).json({ error: `Hugging Face Refused: ${errorText}` });
         }
 
-        // Hugging Face يرجع الصورة كـ Binary Data (Buffer/Blob) وليس كنص JSON
+        // تحويل البيانات الثنائية الراجعة إلى Base64 بنجاح
         const arrayBuffer = await response.arrayBuffer();
-        
-        // تحويل الـ ArrayBuffer إلى Base64 ليتوافق مع تطبيق سالم ميديا
         const buffer = Buffer.from(arrayBuffer);
         const base64Image = buffer.toString('base64');
 
-        // إرجاع الصورة للواجهة الأمامية
         res.json({ 
             success: true,
             imageBase64: base64Image,
-            imageUrl: `data:image/jpeg;base64,${base64Image}` // FLUX عادة يرجع Jpeg
+            imageUrl: `data:image/jpeg;base64,${base64Image}`
         });
 
     } catch (error) {
         console.error("[HuggingFace Endpoint Error]:", error);
-        res.status(500).json({ error: `خطأ داخلي في السيرفر: ${error.message}` });
+        res.status(500).json({ error: error.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Sercure Proxy Server is actively running on port ${PORT}`);
+    console.log(`🚀 Secure Proxy Server is actively running on port ${PORT}`);
 });
