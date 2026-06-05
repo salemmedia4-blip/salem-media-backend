@@ -1,11 +1,12 @@
 const express = require('express');
 const cors = require('cors');
+const https = require('https'); // استخدام الموديل الأصلي لضمان استقرار الشبكة وتفادي أخطاء fetch الافتراضية
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// إعدادات الـ CORS والـ Body Parser لتمرير واستقبال البيانات الكبيرة
+// إعدادات الـ CORS والـ Body Parser لتمرير واستقبال البيانات الكبيرة بدون قيود
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -19,10 +20,10 @@ const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 
 // صفحة تأكيدية لفحص السيرفر
 app.get('/', (req, res) => {
-    res.status(200).send('🚀 سيرفر سالم ميديا السحابي المطور يعمل بكفاءة! مرتبط الآن بـ Gemini (للنصوص) و Hugging Face FLUX (للصور المجانية)!');
+    res.status(200).send('🚀 سيرفر سالم ميديا السحابي الفولاذي يعمل بكفاءة قصوى ومحمي بالكامل!');
 });
 
-// 1. ممر التوليد النصي (يبقى على Gemini 2.5 Flash للأدوات التسويقية)
+// 1. ممر التوليد النصي لـ Gemini 2.5 Flash
 app.post('/api/generate', async (req, res) => {
     try {
         if (!GEMINI_API_KEY) {
@@ -50,7 +51,63 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
-// 2. ممر توليد الصور الفوري (تم تحويله بالكامل إلى Hugging Face Inference API المجاني)
+// دالة سحرية تستخدم بروتوكول HTTPS الصرف وتجبر الاتصال على IPv4 لتفادي مشاكل الـ fetch
+function queryHuggingFaceDirect(prompt, apiKey) {
+    return new Promise((resolve, reject) => {
+        const postData = JSON.stringify({
+            inputs: prompt,
+            options: { wait_for_model: true } // الانتظار الإلزامي لاستيقاظ الموديل
+        });
+
+        const options = {
+            hostname: 'api-inference.huggingface.co',
+            port: 443,
+            path: '/models/black-forest-labs/FLUX.1-schnell',
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData),
+                'User-Agent': 'SalemMediaApp/1.0'
+            },
+            family: 4, // ⚡ السر العسكري: إجبار السيرفر على استخدام IPv4 لمنع أخطاء DNS و network dropouts
+            timeout: 60000 // مهلة دقيقة كاملة لضمان اكتمال الرسم
+        };
+
+        const req = https.request(options, (res) => {
+            // معالجة الأخطاء وإرجاع رسالة الخطأ الحقيقية القادمة من Hugging Face
+            if (res.statusCode !== 200) {
+                let errorBody = '';
+                res.on('data', chunk => errorBody += chunk);
+                res.on('end', () => {
+                    reject(new Error(`HuggingFace_HTTP_${res.statusCode}: ${errorBody}`));
+                });
+                return;
+            }
+
+            // استقبال البيانات الثنائية للصورة
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+                resolve(Buffer.concat(chunks));
+            });
+        });
+
+        req.on('error', (e) => {
+            reject(e);
+        });
+
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('انتهت مهلة الاتصال بخادم الرسم السحابي (60 ثانية). يرجى إعادة المحاولة.'));
+        });
+
+        req.write(postData);
+        req.end();
+    });
+}
+
+// 2. ممر توليد الصور الآمن والذكي عبر FLUX
 app.post('/api/generate-image', async (req, res) => {
     try {
         if (!HUGGINGFACE_API_KEY) {
@@ -62,41 +119,13 @@ app.post('/api/generate-image', async (req, res) => {
             return res.status(400).json({ error: "يرجى كتابة موجه إعلاني للرسم." });
         }
 
-        // استخدام موديل FLUX.1-schnell من Hugging Face (مجاني، سريع، ومفتوح)
-        const MODEL_ID = "black-forest-labs/FLUX.1-schnell";
-        const url = `https://api-inference.huggingface.co/models/${MODEL_ID}`;
+        console.log(`[Proxy] Generating image via FLUX for prompt: "${prompt}"`);
 
-        // إرسال الطلب مع أمر الانتظار الإلزامي لمنع حدوث "fetch failed"
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-                'Content-Type': 'application/json',
-                'User-Agent': 'SalemMediaApp/1.0' // لإعلام Hugging Face بأنه اتصال من تطبيق رسمي
-            },
-            body: JSON.stringify({
-                inputs: prompt,
-                options: {
-                    wait_for_model: true // ⚡ الأمر السحري: انتظر استيقاظ الموديل ولا تقطع الاتصال فوراً!
-                }
-            })
-        });
+        // الاتصال بالخادم المطور والآمن
+        const imageBuffer = await queryHuggingFaceDirect(prompt, HUGGINGFACE_API_KEY);
 
-        // معالجة الأخطاء من Hugging Face
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("[HuggingFace API Error]:", errorText);
-            
-            if (response.status === 503) {
-                 return res.status(503).json({ error: "الموديل يستيقظ حالياً على سيرفرات Hugging Face، يرجى تكرار الضغط بعد 10 ثوانٍ." });
-            }
-            return res.status(response.status).json({ error: `Hugging Face Refused: ${errorText}` });
-        }
-
-        // تحويل البيانات الثنائية الراجعة إلى Base64 بنجاح
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        const base64Image = buffer.toString('base64');
+        // تحويل الصورة الثنائية إلى صيغة Base64 لإرسالها للواجهة
+        const base64Image = imageBuffer.toString('base64');
 
         res.json({ 
             success: true,
@@ -105,11 +134,22 @@ app.post('/api/generate-image', async (req, res) => {
         });
 
     } catch (error) {
-        console.error("[HuggingFace Endpoint Error]:", error);
-        res.status(500).json({ error: error.message });
+        console.error("[HuggingFace Endpoint Error]:", error.message);
+        
+        // إظهار سبب الخطأ الفعلي للتسهيل على المستخدم معرفة حالة المفتاح
+        let friendlyMessage = error.message;
+        if (friendlyMessage.includes("HuggingFace_HTTP_401")) {
+            friendlyMessage = "مفتاح HUGGINGFACE_API_KEY غير صالح أو انتهت صلاحيته. يرجى مراجعته في Render.";
+        } else if (friendlyMessage.includes("HuggingFace_HTTP_403")) {
+            friendlyMessage = "تم رفض الوصول من Hugging Face. تأكد من تفعيل صلاحيات المفتاح.";
+        } else if (friendlyMessage.includes("HuggingFace_HTTP_503")) {
+            friendlyMessage = "سيرفرات FLUX مزدحمة حالياً ومستغرقة في النوم، يرجى تكرار الضغط بعد 10 ثوانٍ ليستيقظ.";
+        }
+
+        res.status(500).json({ error: friendlyMessage });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Secure Proxy Server is actively running on port ${PORT}`);
+    console.log(`🚀 Sercure Proxy Server is actively running on port ${PORT}`);
 });
