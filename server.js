@@ -5,7 +5,7 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// إعدادات الـ CORS والـ Body Parser لتمرير واستقبال الصور الكبيرة بـ Base64
+// إعدادات الـ CORS والـ Body Parser لتمرير واستقبال البيانات الكبيرة
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -13,24 +13,24 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// جلب مفتاح الـ API الخاص بك من بيئة Render
+// جلب المفاتيح من بيئة Render
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 
 // صفحة تأكيدية لفحص السيرفر
 app.get('/', (req, res) => {
-    res.status(200).send('🚀 سيرفر سالم ميديا السحابي المطور يعمل بكفاءة واستقرار تام، ومرتبط مباشرة بـ Google Imagen 4.0!');
+    res.status(200).send('🚀 سيرفر سالم ميديا السحابي المطور يعمل بكفاءة! مرتبط الآن بـ Gemini (للنصوص) و Hugging Face FLUX (للصور المجانية)!');
 });
 
-// 1. ممر التوليد النصي (Gemini 2.5 Flash للأدوات التسويقية والعصف الذهني)
+// 1. ممر التوليد النصي (يبقى على Gemini 2.5 Flash للأدوات التسويقية)
 app.post('/api/generate', async (req, res) => {
     try {
-        const apiKey = GEMINI_API_KEY;
-        if (!apiKey) {
-            return res.status(500).json({ error: "مفتاح الـ API غير معرّف في لوحة تحكم رندر (GEMINI_API_KEY)." });
+        if (!GEMINI_API_KEY) {
+            return res.status(500).json({ error: "مفتاح الـ API الخاص بجوجل غير معرّف." });
         }
 
         const model = "gemini-2.5-flash-preview-09-2025";
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
         const response = await fetch(url, {
             method: 'POST',
@@ -50,71 +50,62 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
-// 2. ممر توليد الصور الفوري والمباشر والحصري عبر Google Imagen 4.0
+// 2. ممر توليد الصور الفوري (تم تحويله بالكامل إلى Hugging Face Inference API المجاني)
 app.post('/api/generate-image', async (req, res) => {
     try {
-        const apiKey = GEMINI_API_KEY;
-        if (!apiKey) {
-            return res.status(500).json({ error: "مفتاح الـ API (GEMINI_API_KEY) غير معرف في لوحة تحكم Render الخاصة بك." });
+        if (!HUGGINGFACE_API_KEY) {
+            return res.status(500).json({ error: "مفتاح HUGGINGFACE_API_KEY غير معرّف في بيئة Render." });
         }
 
         const { prompt } = req.body;
         if (!prompt) {
-            return res.status(400).json({ error: "يرجى كتابة فكرة أو موجه إعلاني للرسم." });
+            return res.status(400).json({ error: "يرجى كتابة موجه إعلاني للرسم." });
         }
 
-        // المسار الدقيق والرسمي لاستدعاء Imagen 4.0 في بيئة Google AI Studio
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-
-        // صياغة البيانات المطلوبة وفقاً لهيكل معالجة الصور الرسمي لجوجل
-        const payload = {
-            instances: {
-                prompt: prompt
-            },
-            parameters: {
-                sampleCount: 1
-            }
-        };
+        // استخدام موديل FLUX.1-schnell من Hugging Face (مجاني، سريع، ومفتوح)
+        const MODEL_ID = "black-forest-labs/FLUX.1-schnell";
+        const url = `https://api-inference.huggingface.co/models/${MODEL_ID}`;
 
         const response = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            headers: {
+                'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                inputs: prompt,
+                // يمكنك إضافة بارامترات أخرى هنا إذا احتجت
+            })
         });
 
-        // إدارة الأخطاء ومعالجتها بذكاء لتفادي تعليق المنصة
-        if (response.status === 429) {
-            return res.status(429).json({ error: "لقد وصلت للحد الأقصى المسموح به من الطلبات المجانية اليومية (Rate Limit) لموديل Imagen، يرجى المحاولة لاحقاً أو ترقية الباقة." });
-        }
-
-        const data = await response.json();
-
+        // معالجة الأخطاء من Hugging Face (مثل تحميل الموديل أو ضغط السيرفر)
         if (!response.ok) {
-            console.error("[Imagen API Error Response]:", data);
-            const errMsg = data.error?.message || "فشلت عملية توليد الصور من خوادم جوجل.";
+            const errorText = await response.text();
+            console.error("[HuggingFace API Error]:", errorText);
             
-            if (errMsg.includes("billing") || errMsg.includes("paid plans") || errMsg.includes("quota")) {
-                return res.status(403).json({ error: "توليد الصور بـ Imagen 4 يتطلب تفعيل الفوترة (Paid Tier) في مشروعك على Google Cloud. يرجى تفعيل الدفع أو استخدام مفتاح API مفعّل به خيار الفوترة." });
+            if (response.status === 503) {
+                 return res.status(503).json({ error: "النموذج قيد التحميل حالياً على خوادم Hugging Face، يرجى المحاولة بعد 30 ثانية." });
             }
-            return res.status(response.status).json({ error: errMsg });
+            return res.status(response.status).json({ error: `فشل من خوادم Hugging Face: ${errorText}` });
         }
 
-        // استخراج الصورة الخام المشفرة بـ Base64 النظيفة والكاملة من رد السيرفر
-        const base64Image = data.predictions?.[0]?.bytesBase64Encoded;
-        if (!base64Image) {
-            return res.status(500).json({ error: "استجابة Imagen لا تحتوي على بيانات تصميم صالحة." });
-        }
+        // Hugging Face يرجع الصورة كـ Binary Data (Buffer/Blob) وليس كنص JSON
+        const arrayBuffer = await response.arrayBuffer();
+        
+        // تحويل الـ ArrayBuffer إلى Base64 ليتوافق مع تطبيق سالم ميديا
+        const buffer = Buffer.from(arrayBuffer);
+        const base64Image = buffer.toString('base64');
 
-        // إرجاع الصورة بترميز Base64 آمن وصالح للعرض والتحميل الفوري
+        // إرجاع الصورة للواجهة الأمامية
         res.json({ 
             success: true,
             imageBase64: base64Image,
-            imageUrl: `data:image/png;base64,${base64Image}`
+            imageUrl: `data:image/jpeg;base64,${base64Image}` // FLUX عادة يرجع Jpeg
         });
 
     } catch (error) {
-        console.error("[Imagen Endpoint Server Error]:", error);
-        res.status(500).json({ error: `خطأ اتصال داخلي بالسيرفر السحابي: ${error.message}` });
+        console.error("[HuggingFace Endpoint Error]:", error);
+        res.status(500).json({ error: `خطأ داخلي في السيرفر: ${error.message}` });
     }
 });
 
