@@ -69,9 +69,8 @@ app.post('/api/generate-image', async (req, res) => {
 
         console.log(`🎨 جاري تحضير طلب الرسم من Google Imagen للموجه: "${prompt}"`);
 
-        // استخدام الـ API الرسمي والمباشر لموديلات توليد الصور من جوجل
-        // ملاحظة: استخدمنا imagen-3.0 لأنه المستقر حالياً في API Studio، ويمكنك تغييره لـ 4.0 إذا كان مفعل بحسابك
-        const model = "imagen-3.0-generate-001"; 
+        // تم الترقية رسمياً لموديل الجيل الرابع المستقر لإنتاج صور مذهلة
+        const model = "imagen-4.0-generate-001"; 
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_API_KEY}`;
 
         const payload = {
