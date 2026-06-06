@@ -13,13 +13,12 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// نظام التتبع النظيف
+// نظام التتبع النظيف لطلبات سالم ميديا
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] 🚀 طلب مستلم: ${req.method} ${req.url}`);
     next();
 });
 
-// مفتاح جوجل الوحيد الذي نحتاجه
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 app.get('/', (req, res) => {
@@ -58,19 +57,18 @@ app.post('/api/generate', async (req, res) => {
 });
 
 // ==========================================
-// 🎨 2. ممر الصور (Google Imagen الرسمي)
+// 🎨 2. ممر الصور الذكي والمزدوج (Google Imagen + Auto Flux Fallback)
 // ==========================================
 app.post('/api/generate-image', async (req, res) => {
+    const { prompt } = req.body;
+    if (!prompt) return res.status(400).json({ error: "يرجى إرسال الفكرة التسويقية." });
+
     try {
-        if (!GEMINI_API_KEY) throw new Error("مفتاح GEMINI_API_KEY مفقود في خوادم Render.");
+        if (!GEMINI_API_KEY) throw new Error("مفتاح GEMINI_API_KEY مفقود.");
 
-        const { prompt } = req.body;
-        if (!prompt) return res.status(400).json({ error: "يرجى إرسال الفكرة التسويقية." });
+        console.log(`🎨 جاري محاولة الرسم عبر Google Imagen للموجه: "${prompt}"`);
 
-        console.log(`🎨 جاري تحضير طلب الرسم من Google Imagen للموجه: "${prompt}"`);
-
-        // تم الترقية رسمياً لموديل الجيل الرابع المستقر لإنتاج صور مذهلة
-        const model = "imagen-4.0-generate-001"; 
+        const model = "imagen-3.0-generate-001"; 
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_API_KEY}`;
 
         const payload = {
@@ -86,35 +84,60 @@ app.post('/api/generate-image', async (req, res) => {
 
         const data = await response.json();
 
-        if (!response.ok) {
-            console.error("❌ [Imagen Error Details]:", data);
-            // معالجة خطأ الفوترة بوضوح
-            if (data.error && data.error.message && data.error.message.includes("billing")) {
-                 throw new Error("موديل الصور من جوجل يطلب تفعيل الفوترة (Paid Tier) في حسابك.");
+        // فحص الأخطاء الأمنية أو أخطاء تفعيل الفوترة لترقية الحساب
+        if (!response.ok || (data.error && data.error.message)) {
+            const errMsg = data.error?.message || "";
+            if (errMsg.includes("paid plans") || errMsg.includes("billing") || response.status === 403) {
+                console.warn("⚠️ تم اكتشاف حساب مجاني من جوجل. جاري تفعيل الممر الرديف المجاني عالي الدقة فوراً...");
+                return await triggerFreeFallback(prompt, res);
             }
-            throw new Error(data.error?.message || "فشل توليد الصورة من خوادم جوجل.");
+            throw new Error(errMsg || "فشل توليد الصورة من خوادم جوجل.");
         }
 
-        // استخراج الـ Base64 النظيف من رد جوجل
         const base64Image = data.predictions?.[0]?.bytesBase64Encoded;
-        
         if (!base64Image) {
-            throw new Error("جوجل أرجعت استجابة فارغة، لم يتم توليد صورة.");
+            throw new Error("جوجل أرجعت استجابة فارغة، جاري التحويل للمحرك البديل.");
         }
 
-        console.log("✅ تم رسم الصورة بنجاح وتجهيزها بصيغة Base64 الآمنة.");
-        
-        // إرسال الصورة كـ Base64 للمتصفح لتجاوز كل قيود الأمان
+        console.log("✅ تم رسم الصورة بنجاح وتأمينها عبر Google Imagen.");
         res.json({
             success: true,
-            imageUrl: `data:image/jpeg;base64,${base64Image}`
+            imageUrl: `data:image/jpeg;base64,${base64Image}`,
+            fallbackUsed: false
         });
 
     } catch (error) {
-        console.error("❌ [Image API Error]:", error.message);
-        res.status(500).json({ error: error.message });
+        console.warn(`⚠️ تعذر الرسم عبر جوجل بسبب: (${error.message}). جاري التوليد بالمحرك الرديف الآمن والمجاني...`);
+        await triggerFreeFallback(prompt, res);
     }
 });
+
+async function triggerFreeFallback(prompt, res) {
+    try {
+        // تنظيف وتجهيز موجه النص
+        const safePrompt = encodeURIComponent(prompt);
+        // استخدام محرك Flux القوي والخالي من أخطاء الأمان أو الفوترة
+        const fallbackUrl = `https://image.pollinations.ai/prompt/${safePrompt}?width=1024&height=1024&nologo=true&private=true&enhance=true&model=flux`;
+        
+        console.log(`📡 جاري جلب الصورة وتشفيرها سحابياً من المحرك البديل...`);
+        const imageResponse = await fetch(fallbackUrl);
+        if (!imageResponse.ok) throw new Error("فشلت عملية الرسم من المحرك البديل أيضاً.");
+        
+        const buffer = await imageResponse.arrayBuffer();
+        const base64Image = Buffer.from(buffer).toString('base64');
+        
+        console.log("✅ تم تجهيز الصورة من المحرك الرديف وإرسالها بأمان كـ Base64.");
+        res.json({
+            success: true,
+            imageUrl: `data:image/jpeg;base64,${base64Image}`,
+            fallbackUsed: true,
+            message: "تم التوليد التلقائي عبر محرك الرسم السريع والمجاني نظراً لعدم تفعيل الفوترة بحساب جوجل."
+        });
+    } catch (err) {
+        console.error("❌ فشل التوليد بكلا المحركين:", err.message);
+        res.status(500).json({ error: "عذراً، تعذر رسم الصورة حالياً: " + err.message });
+    }
+}
 
 app.listen(PORT, () => {
     console.log(`✅ [SERVER LIVE] السيرفر النظيف والرسمي يعمل الآن على منفذ ${PORT}`);
