@@ -1,14 +1,11 @@
-// 🛠️ الحل السحري والنهائي لمشكلة (ENOTFOUND) وتجاوز خطأ الـ SSL Handshake Alert 40!
 const express = require('express');
 const cors = require('cors');
-const https = require('https');
-const dns = require('dns');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// إعدادات الـ CORS والـ Body Parser لتأمين الاتصالات بسلاسة
+// إعدادات الـ CORS والـ Body Parser
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -16,68 +13,25 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// نظام التتبع لطباعة الطلبات النصية الواردة في الـ Logs لمراقبة الجودة
+// نظام التتبع النظيف
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] 🚀 طلب مستلم: ${req.method} ${req.url}`);
     next();
 });
 
-// جلب مفاتيح الـ API من بيئة Render
+// مفتاح جوجل الوحيد الذي نحتاجه
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
-
-// دالة حل العنوان عبر DNS-over-HTTPS (DoH) لحل مشكلة ENOTFOUND دون كسر الـ SSL
-function resolveHuggingFaceIP() {
-    return new Promise((resolve, reject) => {
-        const options = {
-            hostname: '1.1.1.1',
-            port: 443,
-            path: '/dns-query?name=api-inference.huggingface.co&type=A',
-            method: 'GET',
-            headers: {
-                'accept': 'application/dns-json',
-                'host': 'cloudflare-dns.com'
-            },
-            servername: 'cloudflare-dns.com',
-            timeout: 5000
-        };
-
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    const json = JSON.parse(data);
-                    const ipRecord = json.Answer?.find(r => r.type === 1);
-                    if (ipRecord && ipRecord.data) {
-                        resolve(ipRecord.data);
-                    } else {
-                        reject(new Error("No valid record in Cloudflare DoH"));
-                    }
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        });
-
-        req.on('error', reject);
-        req.end();
-    });
-}
 
 app.get('/', (req, res) => {
-    res.status(200).send('✅ سيرفر سالم ميديا النصي والصوري يعمل بكفاءة قصوى ومحصن ضد أخطاء التشفير والـ DNS!');
+    res.status(200).send('✅ سيرفر سالم ميديا شغال بنسخته النظيفة والرسمية (Google Native Integration).');
 });
 
-// ========================================================
-// 📝 1. أدوات النصوص والذكاء الاصطناعي (Gemini 2.5 Flash المستقر)
-// ========================================================
+// ==========================================
+// 📝 1. ممر النصوص (Gemini Flash)
+// ==========================================
 app.post('/api/generate', async (req, res) => {
     try {
-        if (!GEMINI_API_KEY) {
-            console.error("❌ مفتاح GEMINI_API_KEY غير موجود في إعدادات رندر!");
-            return res.status(401).json({ error: "مفتاح جمناي غير معرّف في بيئة Render السحابية." });
-        }
+        if (!GEMINI_API_KEY) throw new Error("مفتاح GEMINI_API_KEY مفقود في خوادم Render.");
 
         const model = "gemini-2.5-flash";
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -91,101 +45,78 @@ app.post('/api/generate', async (req, res) => {
         const data = await response.json();
         
         if (!response.ok) {
-            console.error("❌ خطأ من سيرفرات جوجل جمناي:", data);
-            return res.status(response.status).json({ error: data.error?.message || "فشلت عملية التوليد من جوجل." });
+            console.error("❌ [Gemini Error]:", data);
+            throw new Error(data.error?.message || "خطأ من سيرفرات جوجل للنصوص.");
         }
 
-        console.log("✅ تم توليد النص بنجاح وإرساله للواجهة.");
+        console.log("✅ تم توليد النصوص بنجاح.");
         res.json(data);
-
     } catch (error) {
-        console.error("❌ [Text Gen Error]:", error);
-        res.status(500).json({ error: `خطأ داخلي في السيرفر: ${error.message}` });
+        console.error("❌ [Text API Error]:", error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
-// ========================================================
-// 🎨 2. ممر توليد الصور الاحتياطي الفولاذي (Render Failover Proxy)
-// ========================================================
+// ==========================================
+// 🎨 2. ممر الصور (Google Imagen الرسمي)
+// ==========================================
 app.post('/api/generate-image', async (req, res) => {
     try {
-        if (!HUGGINGFACE_API_KEY) {
-            console.error("❌ مفتاح HUGGINGFACE_API_KEY غير موجود في إعدادات رندر!");
-            return res.status(401).json({ error: "مفتاح Hugging Face غير معرف بالسيرفر." });
-        }
+        if (!GEMINI_API_KEY) throw new Error("مفتاح GEMINI_API_KEY مفقود في خوادم Render.");
 
         const { prompt } = req.body;
-        if (!prompt) {
-            return res.status(400).json({ error: "يرجى كتابة موجه للرسم." });
-        }
+        if (!prompt) return res.status(400).json({ error: "يرجى إرسال الفكرة التسويقية." });
 
-        console.log(`🎨 [Proxy] جاري معالجة طلب رسم للموجه: "${prompt}"...`);
+        console.log(`🎨 جاري تحضير طلب الرسم من Google Imagen للموجه: "${prompt}"`);
 
-        const MODEL_ID = "black-forest-labs/FLUX.1-schnell";
-        const payloadData = JSON.stringify({ inputs: prompt });
+        // استخدام الـ API الرسمي والمباشر لموديلات توليد الصور من جوجل
+        // ملاحظة: استخدمنا imagen-3.0 لأنه المستقر حالياً في API Studio، ويمكنك تغييره لـ 4.0 إذا كان مفعل بحسابك
+        const model = "imagen-3.0-generate-001"; 
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_API_KEY}`;
 
-        // 🛠️ حقن الـ DNS Resolver المطور وتجنب خطأ المصافحة SSL Alert 40
-        const options = {
-            hostname: 'api-inference.huggingface.co', // اسم الخادم الأصلي (لضمان نجاح الـ SSL Handshake!)
-            port: 443,
-            path: `/models/${MODEL_ID}`,
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payloadData)
-            },
-            lookup: (hostname, opts, callback) => {
-                // حل العنوان بالآي بي وتوجيه التوصيل الشبكي فقط خلف الكواليس دون تخريب الـ SSL
-                resolveHuggingFaceIP()
-                    .then(ip => {
-                        console.log(`[DNS Bypass] Resolved ${hostname} directly to IP ${ip}`);
-                        callback(null, ip, 4);
-                    })
-                    .catch((err) => {
-                        console.warn(`[DNS Bypass Fallback] Using standard dns lookup: ${err.message}`);
-                        dns.lookup(hostname, opts, callback);
-                    });
-            },
-            timeout: 60000
+        const payload = {
+            instances: [ { prompt: prompt } ],
+            parameters: { sampleCount: 1 }
         };
 
-        const hfRequest = https.request(options, (hfResponse) => {
-            const chunks = [];
-            hfResponse.on('data', (chunk) => chunks.push(chunk));
-            hfResponse.on('end', () => {
-                const buffer = Buffer.concat(chunks);
-                const contentType = hfResponse.headers['content-type'] || 'image/jpeg';
-
-                if (hfResponse.statusCode !== 200) {
-                    const errorMsg = buffer.toString('utf8');
-                    console.error("❌ خطأ من خوادم Hugging Face:", errorMsg);
-                    return res.status(hfResponse.statusCode).json({ error: `فشل التوليد: ${errorMsg}` });
-                }
-
-                const base64Image = buffer.toString('base64');
-                console.log("✅ تم رسم الصورة بنجاح وتجاوز جدار حماية رندر والـ SSL Handshake!");
-                res.json({
-                    success: true,
-                    imageUrl: `data:${contentType};base64,${base64Image}`
-                });
-            });
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
 
-        hfRequest.on('error', (err) => {
-            console.error("❌ [Proxy request error]:", err);
-            res.status(500).json({ error: `خطأ اتصال بمحرك الرسم السحابي: ${err.message}` });
-        });
+        const data = await response.json();
 
-        hfRequest.write(payloadData);
-        hfRequest.end();
+        if (!response.ok) {
+            console.error("❌ [Imagen Error Details]:", data);
+            // معالجة خطأ الفوترة بوضوح
+            if (data.error && data.error.message && data.error.message.includes("billing")) {
+                 throw new Error("موديل الصور من جوجل يطلب تفعيل الفوترة (Paid Tier) في حسابك.");
+            }
+            throw new Error(data.error?.message || "فشل توليد الصورة من خوادم جوجل.");
+        }
+
+        // استخراج الـ Base64 النظيف من رد جوجل
+        const base64Image = data.predictions?.[0]?.bytesBase64Encoded;
+        
+        if (!base64Image) {
+            throw new Error("جوجل أرجعت استجابة فارغة، لم يتم توليد صورة.");
+        }
+
+        console.log("✅ تم رسم الصورة بنجاح وتجهيزها بصيغة Base64 الآمنة.");
+        
+        // إرسال الصورة كـ Base64 للمتصفح لتجاوز كل قيود الأمان
+        res.json({
+            success: true,
+            imageUrl: `data:image/jpeg;base64,${base64Image}`
+        });
 
     } catch (error) {
-        console.error("❌ [Image Gen Error]:", error);
-        res.status(500).json({ error: `فشل الاتصال بخادم الرسم السحابي: ${error.message}` });
+        console.error("❌ [Image API Error]:", error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ [SERVER STARTED] السيرفر شغال بالوضع الآمن والمقاوم لظروف الـ DNS/SSL على منفذ ${PORT}`);
+    console.log(`✅ [SERVER LIVE] السيرفر النظيف والرسمي يعمل الآن على منفذ ${PORT}`);
 });
