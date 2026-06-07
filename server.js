@@ -57,87 +57,80 @@ app.post('/api/generate', async (req, res) => {
 });
 
 // ==========================================
-// 🎨 2. ممر الصور الذكي والمزدوج (Google Imagen + Auto Flux Fallback)
+// 🎨 2. ممر الصور (Hugging Face Inference API)
 // ==========================================
 app.post('/api/generate-image', async (req, res) => {
     const { prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: "يرجى إرسال الفكرة التسويقية." });
 
+    // قراءة توكن Hugging Face من متغيرات البيئة في Render (دعم الاسمين لضمان الاستقرار التام)
+    const HF_TOKEN = process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN;
+    if (!HF_TOKEN) {
+        return res.status(500).json({ error: "مفتاح HUGGINGFACE_TOKEN مفقود في خوادم Render. يرجى إضافته من لوحة التحكم." });
+    }
+
     try {
-        if (!GEMINI_API_KEY) throw new Error("مفتاح GEMINI_API_KEY مفقود.");
+        console.log(`🎨 [Hugging Face] جاري تحضير طلب الرسم للموجه: "${prompt}"`);
 
-        console.log(`🎨 جاري محاولة الرسم عبر Google Imagen للموجه: "${prompt}"`);
+        // استخدام الموديل الأسرع والأقوى FLUX.1-schnell
+        const model = "black-forest-labs/FLUX.1-schnell";
+        const hfUrl = `https://api-inference.huggingface.co/models/${model}`;
 
-        const model = "imagen-3.0-generate-001"; 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_API_KEY}`;
-
-        const payload = {
-            instances: [ { prompt: prompt } ],
-            parameters: { sampleCount: 1 }
-        };
-
-        const response = await fetch(url, {
+        const response = await fetch(hfUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            headers: {
+                'Authorization': `Bearer ${HF_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ inputs: prompt })
         });
 
-        const data = await response.json();
-
-        // فحص الأخطاء الأمنية أو أخطاء تفعيل الفوترة لترقية الحساب
-        if (!response.ok || (data.error && data.error.message)) {
-            const errMsg = data.error?.message || "";
-            if (errMsg.includes("paid plans") || errMsg.includes("billing") || response.status === 403) {
-                console.warn("⚠️ تم اكتشاف حساب مجاني من جوجل. جاري تفعيل الممر الرديف المجاني عالي الدقة فوراً...");
-                return await triggerFreeFallback(prompt, res);
-            }
-            throw new Error(errMsg || "فشل توليد الصورة من خوادم جوجل.");
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error("❌ [Hugging Face API Error]:", errText);
+            throw new Error("Hugging Face استجابت بخطأ: " + (errText || response.statusText));
         }
 
-        const base64Image = data.predictions?.[0]?.bytesBase64Encoded;
-        if (!base64Image) {
-            throw new Error("جوجل أرجعت استجابة فارغة، جاري التحويل للمحرك البديل.");
-        }
+        const arrayBuffer = await response.arrayBuffer();
+        const base64Image = Buffer.from(arrayBuffer).toString('base64');
 
-        console.log("✅ تم رسم الصورة بنجاح وتأمينها عبر Google Imagen.");
+        console.log("✅ تم رسم الصورة بنجاح وتحويلها لـ Base64 لضمان الحفظ المباشر.");
         res.json({
             success: true,
-            imageUrl: `data:image/jpeg;base64,${base64Image}`,
-            fallbackUsed: false
+            imageUrl: `data:image/jpeg;base64,${base64Image}`
         });
 
     } catch (error) {
-        console.warn(`⚠️ تعذر الرسم عبر جوجل بسبب: (${error.message}). جاري التوليد بالمحرك الرديف الآمن والمجاني...`);
-        await triggerFreeFallback(prompt, res);
+        console.error("❌ [Hugging Face Image Error]:", error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
-async function triggerFreeFallback(prompt, res) {
-    try {
-        // تنظيف وتجهيز موجه النص
-        const safePrompt = encodeURIComponent(prompt);
-        // استخدام محرك Flux القوي والخالي من أخطاء الأمان أو الفوترة
-        const fallbackUrl = `https://image.pollinations.ai/prompt/${safePrompt}?width=1024&height=1024&nologo=true&private=true&enhance=true&model=flux`;
-        
-        console.log(`📡 جاري جلب الصورة وتشفيرها سحابياً من المحرك البديل...`);
-        const imageResponse = await fetch(fallbackUrl);
-        if (!imageResponse.ok) throw new Error("فشلت عملية الرسم من المحرك البديل أيضاً.");
-        
-        const buffer = await imageResponse.arrayBuffer();
-        const base64Image = Buffer.from(buffer).toString('base64');
-        
-        console.log("✅ تم تجهيز الصورة من المحرك الرديف وإرسالها بأمان كـ Base64.");
-        res.json({
-            success: true,
-            imageUrl: `data:image/jpeg;base64,${base64Image}`,
-            fallbackUsed: true,
-            message: "تم التوليد التلقائي عبر محرك الرسم السريع والمجاني نظراً لعدم تفعيل الفوترة بحساب جوجل."
-        });
-    } catch (err) {
-        console.error("❌ فشل التوليد بكلا المحركين:", err.message);
-        res.status(500).json({ error: "عذراً، تعذر رسم الصورة حالياً: " + err.message });
+// ==========================================
+// 📡 3. فحص حالة الاتصال بـ Hugging Face
+// ==========================================
+app.get('/api/hf-status', async (req, res) => {
+    const HF_TOKEN = process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN;
+    if (!HF_TOKEN) {
+        return res.json({ status: "Error", message: "مفتاح HUGGINGFACE_TOKEN مفقود ❌" });
     }
-}
+    try {
+        const response = await fetch("https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell", {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${HF_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ inputs: "connection check" })
+        });
+        if (response.status === 401) {
+            return res.json({ status: "Error", message: "توكن غير صالح ❌" });
+        }
+        res.json({ status: "Connected", message: "متصل وجاهز ✅" });
+    } catch (e) {
+        res.json({ status: "Error", message: "مشكلة بالاتصال بالخادم ❌" });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`✅ [SERVER LIVE] السيرفر النظيف والرسمي يعمل الآن على منفذ ${PORT}`);
