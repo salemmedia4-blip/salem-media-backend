@@ -1,17 +1,1 @@
-{
-  "name": "salem-media-backend",
-  "version": "1.2.0",
-  "description": "السيرفر الخلفي المطور والآمن لمنصة سالم ميديا",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "@google/genai": "latest",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2"
-  },
-  "author": "Salem Media",
-  "license": "ISC"
-}
+{"name": "salem-media-backend","version": "1.2.0","description": "السيرفر الخلفي المطور والآمن لمنصة سالم ميديا المحدث بأحدث مكتبات جوجل ورسم الصور","main": "server.js","scripts": {"start": "node server.js"},"dependencies": {"@google/genai": "^0.1.1","@huggingface/inference": "^2.8.1","cors": "^2.8.5","dotenv": "^16.4.5","express": "^4.19.2"},"author": "Salem Media","license": "ISC"}
