@@ -59,20 +59,40 @@ app.post('/api/generate', async (req, res) => {
         if (!GEMINI_API_KEY) {
             return res.status(401).json({ error: "مفتاح GEMINI_API_KEY مفقود في إعدادات البيئة لـ Render." });
         }
-        const model = "gemini-2.5-flash";
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(req.body)
-        });
+        // قائمة النماذج الاحتياطية لضمان التبديل الذكي التلقائي وتخطي ضغط الاستخدام (Failover Mechanism)
+        const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+        let lastError = null;
 
-        const data = await response.json();
-        if (!response.ok) {
-            throw new Error(data.error?.message || "فشلت عملية التوليد من جوجل.");
+        for (const model of models) {
+            try {
+                console.log(`📡 [Attempt] Trying Gemini model: ${model}...`);
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(req.body)
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    console.log(`✅ [Success] Successfully resolved using model: ${model}`);
+                    return res.json(data);
+                } else {
+                    lastError = data.error?.message || "فشلت عملية التوليد.";
+                    console.warn(`⚠️ [Model Overload Failover] Model ${model} returned: "${lastError}". Trying alternative...`);
+                }
+            } catch (err) {
+                lastError = err.message;
+                console.error(`❌ [Connection Error] Failed to connect using model ${model}:`, err.message);
+            }
         }
-        res.json(data);
+
+        // إذا فشلت كافة النماذج البديلة نتيحة لضغط عام من المصدر
+        throw new Error(`كافة خوادم الذكاء الاصطناعي السحابية لـ Google تواجه ضغطاً شديداً حالياً. آخر خطأ مستلم: ${lastError}`);
+
     } catch (error) {
         console.error("❌ [Gemini Text Error]:", error.message);
         res.status(500).json({ error: error.message });
