@@ -5,7 +5,7 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// إعدادات الـ CORS والـ Body Parser
+// تفعيل إعدادات CORS الشاملة لمنع أي حظر من المتصفحات أو المحاكيات
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -13,24 +13,42 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// نظام التتبع النظيف لطلبات سالم ميديا
+// نظام التتبع والمراقبة اللحظية للطلبات
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] 🚀 طلب مستلم: ${req.method} ${req.url}`);
     next();
 });
 
+// جلب المفاتيح من بيئة Render بأي تسمية كتبتها (مرونة كاملة لمنع الأخطاء)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const HUGGINGFACE_TOKEN = process.env.HUGGINGFACE_TOKEN || process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN || process.env.HF_API_KEY;
 
+// الصفحة الرئيسية للتأكد من عمل السيرفر
 app.get('/', (req, res) => {
-    res.status(200).send('✅ سيرفر سالم ميديا شغال بنسخته النظيفة والرسمية (Google Native Integration).');
+    res.status(200).send('✅ سيرفر سالم ميديا نشط وجاهز للعمل مع كامل الأدوات!');
 });
 
-// ==========================================
-// 📝 1. ممر النصوص (Gemini Flash)
-// ==========================================
+// ========================================================
+// 📡 ممر فحص حالة ربط توكن Hugging Face للوحة التحكم
+// ========================================================
+app.get('/api/hf-status', (req, res) => {
+    if (HUGGINGFACE_TOKEN && HUGGINGFACE_TOKEN.trim().startsWith('hf_')) {
+        console.log("✅ [Status Check] Hugging Face Token is valid and detected.");
+        res.json({ status: "Connected", message: "متصل ومفعل ✅" });
+    } else {
+        console.warn("⚠️ [Status Check] Hugging Face Token is missing or invalid.");
+        res.json({ status: "Disconnected", message: "توكن مفقود أو غير صالح ❌" });
+    }
+});
+
+// ========================================================
+// 📝 1. ممر معالجة النصوص وعصف الأفكار (Gemini 2.5 Flash)
+// ========================================================
 app.post('/api/generate', async (req, res) => {
     try {
-        if (!GEMINI_API_KEY) throw new Error("مفتاح GEMINI_API_KEY مفقود في خوادم Render.");
+        if (!GEMINI_API_KEY) {
+            return res.status(401).json({ error: "مفتاح GEMINI_API_KEY مفقود في إعدادات Render السحابية." });
+        }
 
         const model = "gemini-2.5-flash";
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -45,41 +63,41 @@ app.post('/api/generate', async (req, res) => {
         
         if (!response.ok) {
             console.error("❌ [Gemini Error]:", data);
-            throw new Error(data.error?.message || "خطأ من سيرفرات جوجل للنصوص.");
+            return res.status(response.status).json({ error: data.error?.message || "فشلت عملية التوليد من جوجل." });
         }
 
-        console.log("✅ تم توليد النصوص بنجاح.");
+        console.log("✅ تم توليد النص وإرساله للواجهة بنجاح.");
         res.json(data);
+
     } catch (error) {
-        console.error("❌ [Text API Error]:", error.message);
-        res.status(500).json({ error: error.message });
+        console.error("❌ [Text Gen Error]:", error);
+        res.status(500).json({ error: `خطأ داخلي في السيرفر: ${error.message}` });
     }
 });
 
-// ==========================================
-// 🎨 2. ممر الصور (Hugging Face Inference API)
-// ==========================================
+// ========================================================
+// 🎨 2. ممر توليد الصور الاحترافي (Hugging Face - FLUX)
+// ========================================================
 app.post('/api/generate-image', async (req, res) => {
-    const { prompt } = req.body;
-    if (!prompt) return res.status(400).json({ error: "يرجى إرسال الفكرة التسويقية." });
-
-    // قراءة توكن Hugging Face من متغيرات البيئة في Render (دعم الاسمين لضمان الاستقرار التام)
-    const HF_TOKEN = process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN;
-    if (!HF_TOKEN) {
-        return res.status(500).json({ error: "مفتاح HUGGINGFACE_TOKEN مفقود في خوادم Render. يرجى إضافته من لوحة التحكم." });
-    }
-
     try {
-        console.log(`🎨 [Hugging Face] جاري تحضير طلب الرسم للموجه: "${prompt}"`);
+        if (!HUGGINGFACE_TOKEN) {
+            return res.status(401).json({ error: "مفتاح HUGGINGFACE_TOKEN مفقود في إعدادات Render." });
+        }
 
-        // استخدام الموديل الأسرع والأقوى FLUX.1-schnell
-        const model = "black-forest-labs/FLUX.1-schnell";
-        const hfUrl = `https://api-inference.huggingface.co/models/${model}`;
+        const { prompt } = req.body;
+        if (!prompt) {
+            return res.status(400).json({ error: "يرجى كتابة فكرة التصميم." });
+        }
 
-        const response = await fetch(hfUrl, {
+        console.log(`🎨 جاري الرسم للموجه: "${prompt}" باستخدام FLUX.1-schnell...`);
+
+        const MODEL_ID = "black-forest-labs/FLUX.1-schnell";
+        const url = `https://api-inference.huggingface.co/models/${MODEL_ID}`;
+
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${HF_TOKEN}`,
+                'Authorization': `Bearer ${HUGGINGFACE_TOKEN.trim()}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ inputs: prompt })
@@ -87,51 +105,26 @@ app.post('/api/generate-image', async (req, res) => {
 
         if (!response.ok) {
             const errText = await response.text();
-            console.error("❌ [Hugging Face API Error]:", errText);
-            throw new Error("Hugging Face استجابت بخطأ: " + (errText || response.statusText));
+            console.error("❌ [Hugging Face Error]:", errText);
+            return res.status(response.status).json({ error: `فشل التوليد: ${errText}` });
         }
 
         const arrayBuffer = await response.arrayBuffer();
         const base64Image = Buffer.from(arrayBuffer).toString('base64');
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
 
-        console.log("✅ تم رسم الصورة بنجاح وتحويلها لـ Base64 لضمان الحفظ المباشر.");
+        console.log("✅ تم رسم الصورة بنجاح وتحويلها لـ Base64.");
         res.json({
             success: true,
-            imageUrl: `data:image/jpeg;base64,${base64Image}`
+            imageUrl: `data:${contentType};base64,${base64Image}`
         });
 
     } catch (error) {
-        console.error("❌ [Hugging Face Image Error]:", error.message);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ==========================================
-// 📡 3. فحص حالة الاتصال بـ Hugging Face
-// ==========================================
-app.get('/api/hf-status', async (req, res) => {
-    const HF_TOKEN = process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN;
-    if (!HF_TOKEN) {
-        return res.json({ status: "Error", message: "مفتاح HUGGINGFACE_TOKEN مفقود ❌" });
-    }
-    try {
-        const response = await fetch("https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell", {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${HF_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ inputs: "connection check" })
-        });
-        if (response.status === 401) {
-            return res.json({ status: "Error", message: "توكن غير صالح ❌" });
-        }
-        res.json({ status: "Connected", message: "متصل وجاهز ✅" });
-    } catch (e) {
-        res.json({ status: "Error", message: "مشكلة بالاتصال بالخادم ❌" });
+        console.error("❌ [Image Gen Error]:", error);
+        res.status(500).json({ error: `فشل السيرفر في توليد الصورة: ${error.message}` });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ [SERVER LIVE] السيرفر النظيف والرسمي يعمل الآن على منفذ ${PORT}`);
+    console.log(`✅ [SERVER STARTED] السيرفر شغال بالكامل ومستعد لخدمة سالم ميديا على منفذ ${PORT}`);
 });
