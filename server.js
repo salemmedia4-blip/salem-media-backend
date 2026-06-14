@@ -45,57 +45,54 @@ app.get('/', (req, res) => {
     res.status(200).send('✅ سيرفر سالم ميديا نشط ويعمل مع نظام DNS المطور ومعالج Hugging Face SDK!');
 });
 
-// ممر فحص حالة الاتصال بـ Hugging Face
-app.get('/api/hf-status', (req, res) => {
-    if (HUGGINGFACE_TOKEN && HUGGINGFACE_TOKEN.trim().startsWith('hf_')) {
-        res.json({ status: "Connected", message: "متصل ومفعل ✅" });
-    } else {
-        res.json({ status: "Disconnected", message: "توكن مفقود أو غير صالح ❌" });
-    }
-});
-
-app.post('/api/generate', async (req, res) => {
+// 📐 ممر تحويل الصور إلى فيكتور عالي الدقة (High Fidelity) عبر Vectorizer.ai API
+app.post('/api/vectorize', async (req, res) => {
     try {
-        if (!GEMINI_API_KEY) {
-            return res.status(401).json({ error: "مفتاح GEMINI_API_KEY مفقود في إعدادات البيئة لـ Render." });
+        const { image, apiKey } = req.body;
+        const finalApiKey = apiKey || process.env.VECTORIZER_AI_API_KEY;
+
+        if (!finalApiKey) {
+            return res.status(401).json({ error: "مفتاح Vectorizer.ai API مفقود. يرجى إضافته في إعدادات التطبيق أو بيئة السيرفر السحابية." });
         }
 
-        // قائمة النماذج الاحتياطية لضمان التبديل الذكي التلقائي وتخطي ضغط الاستخدام (Failover Mechanism)
-        const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
-        let lastError = null;
-
-        for (const model of models) {
-            try {
-                console.log(`📡 [Attempt] Trying Gemini model: ${model}...`);
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(req.body)
-                });
-
-                const data = await response.json();
-                
-                if (response.ok) {
-                    console.log(`✅ [Success] Successfully resolved using model: ${model}`);
-                    return res.json(data);
-                } else {
-                    lastError = data.error?.message || "فشلت عملية التوليد.";
-                    console.warn(`⚠️ [Model Overload Failover] Model ${model} returned: "${lastError}". Trying alternative...`);
-                }
-            } catch (err) {
-                lastError = err.message;
-                console.error(`❌ [Connection Error] Failed to connect using model ${model}:`, err.message);
-            }
+        if (!image) {
+            return res.status(400).json({ error: "يرجى تقديم أو رفع الصورة المطلوب تحويلها." });
         }
 
-        // إذا فشلت كافة النماذج البديلة نتيحة لضغط عام من المصدر
-        throw new Error(`كافة خوادم الذكاء الاصطناعي السحابية لـ Google تواجه ضغطاً شديداً حالياً. آخر خطأ مستلم: ${lastError}`);
+        console.log("📐 [Vectorizer API] Sending request to Vectorizer.ai...");
+        
+        // تحويل الـ base64 إلى Buffer نقي لمعالجته سحابياً
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        // إنشاء FormData سحابي متوافق مع Node 18+
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: 'image/png' });
+        formData.append('image', blob, 'image.png');
+
+        // ترميز الـ API Key لتمريره في الـ Basic Auth
+        const authHeader = 'Basic ' + Buffer.from(':' + finalApiKey).toString('base64');
+
+        const response = await fetch('https://vectorizer.ai/api/v1/vectorize', {
+            method: 'POST',
+            headers: {
+                'Authorization': authHeader
+            },
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Vectorizer.ai API Error: ${response.status} - ${errText}`);
+        }
+
+        const svgString = await response.text();
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.send(svgString);
 
     } catch (error) {
-        console.error("❌ [Gemini Text Error]:", error.message);
-        res.status(500).json({ error: error.message });
+        console.error("❌ [Vectorizer API Error]:", error.message);
+        res.status(500).json({ error: `فشل التحويل السحابي: ${error.message}` });
     }
 });
 
