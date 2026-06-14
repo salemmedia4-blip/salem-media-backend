@@ -1,1 +1,16 @@
-{"name": "salem-media-backend","version": "1.2.0","description": "السيرفر الخلفي المطور والآمن لمنصة سالم ميديا المحدث بأحدث مكتبات جوجل ورسم الصور","main": "server.js","scripts": {"start": "node server.js"},"dependencies": {"@google/genai": "^2.8.0","@huggingface/inference": "^2.8.1","cors": "^2.8.5","dotenv": "^16.4.5","express": "^4.19.2"},"author": "Salem Media","license": "ISC"}
+{
+  "name": "salem-media-backend",
+  "version": "1.2.0",
+  "description": "Backend Pipeline for Salem Media Vectorizer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "sharp": "^0.33.4",
+    "potrace": "^2.1.8"
+  }
+}
