@@ -1,17 +1,18 @@
 const express = require('express');
 const cors = require('cors');
-const https = require('https');
 const dns = require('dns');
+const Jimp = require('jimp');
+const potrace = require('potrace');
 require('dotenv').config();
 
-// 1. فرض استخدام خوادم DNS العامة لحل مشكلة ENOTFOUND في منصة Render
+// فرض استخدام خوادم DNS العامة لضمان استقرار الاتصالات
 try {
     if (typeof dns.setServers === 'function') {
         dns.setServers(['8.8.8.8', '1.1.1.1']);
-        console.log("📡 [DNS Custom Config] Forced DNS lookup to use Google (8.8.8.8) and Cloudflare (1.1.1.1) successfully.");
+        console.log("📡 [DNS Config] Forced DNS to Google & Cloudflare successfully.");
     }
 } catch (err) {
-    console.warn("⚠️ [DNS Warning] Custom DNS override failed, using default system DNS:", err.message);
+    console.warn("⚠️ [DNS Warning] Custom DNS override failed:", err.message);
 }
 
 const app = express();
@@ -24,156 +25,280 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// نظام مراقبة وتتبع الطلبات اللحظي
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] 🚀 طلب مستلم: ${req.method} ${req.url}`);
-    next();
-});
+// خوارزمية K-Means سريعة ومطورة لتجميع واستخلاص عينات الألوان بدقة عالية
+function runKMeans(pixels, k, maxIterations = 12) {
+    // اختيار مراكز عشوائية أولية من بكسلات الصورة المتاحة
+    let centroids = [];
+    for (let i = 0; i < k; i++) {
+        centroids.push(pixels[Math.floor(Math.random() * pixels.length)]);
+    }
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const HUGGINGFACE_TOKEN = process.env.HUGGINGFACE_TOKEN || process.env.HF_TOKEN;
+    for (let iter = 0; iter < maxIterations; iter++) {
+        let clusters = Array.from({ length: k }, () => []);
+        
+        // تعيين كل بكسل للمركز اللوني الأقرب رياضياً
+        for (let p of pixels) {
+            let minDist = Infinity;
+            let closestCentroid = 0;
+            for (let c = 0; c < k; c++) {
+                let dist = Math.sqrt(
+                    Math.pow(p.r - centroids[c].r, 2) +
+                    Math.pow(p.g - centroids[c].g, 2) +
+                    Math.pow(p.b - centroids[c].b, 2)
+                );
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestCentroid = c;
+                }
+            }
+            clusters[closestCentroid].push(p);
+        }
 
-// طباعة آمنة للتوكن للتحقق من قراءته في السجلات كما طلب الكابتن سالم
-if (HUGGINGFACE_TOKEN) {
-    const safeToken = HUGGINGFACE_TOKEN.trim().substring(0, 8) + "..." + HUGGINGFACE_TOKEN.trim().substring(HUGGINGFACE_TOKEN.trim().length - 4);
-    console.log(`✅ [Env Verification] HUGGINGFACE_TOKEN is loaded correctly (Value: ${safeToken})`);
-} else {
-    console.error("❌ [Env Warning] HUGGINGFACE_TOKEN is missing from your Render Environment Variables!");
+        // إعادة حساب متوسط مراكز الألوان للخطوة التالية
+        let newCentroids = [];
+        for (let c = 0; c < k; c++) {
+            if (clusters[c].length === 0) {
+                newCentroids.push(centroids[c]);
+                continue;
+            }
+            let sumR = 0, sumG = 0, sumB = 0;
+            for (let p of clusters[c]) {
+                sumR += p.r;
+                sumG += p.g;
+                sumB += p.b;
+            }
+            newCentroids.push({
+                r: Math.round(sumR / clusters[c].length),
+                g: Math.round(sumG / clusters[c].length),
+                b: Math.round(sumB / clusters[c].length)
+            });
+        }
+        centroids = newCentroids;
+    }
+    
+    // تحويل المخرجات إلى صيغة Hex المعتمدة في التصميم
+    return centroids.map(c => {
+        const rHex = c.r.toString(16).padStart(2, '0');
+        const gHex = c.g.toString(16).padStart(2, '0');
+        const bHex = c.b.toString(16).padStart(2, '0');
+        return `#${rHex}${gHex}${bHex}`.toUpperCase();
+    });
 }
 
-app.get('/', (req, res) => {
-    res.status(200).send('✅ سيرفر سالم ميديا نشط ويعمل مع نظام DNS المطور ومعالج Hugging Face SDK!');
-});
-
-// 📐 ممر تحويل الصور إلى فيكتور عالي الدقة (High Fidelity) عبر Vectorizer.ai API
-app.post('/api/vectorize', async (req, res) => {
+app.post('/api/extract-palette', async (req, res) => {
     try {
-        const { image, apiKey } = req.body;
-        const finalApiKey = apiKey || process.env.VECTORIZER_AI_API_KEY;
-
-        if (!finalApiKey) {
-            return res.status(401).json({ error: "مفتاح Vectorizer.ai API مفقود. يرجى إضافته في إعدادات التطبيق أو بيئة السيرفر السحابية." });
-        }
-
+        const { image, maxColors } = req.body;
         if (!image) {
-            return res.status(400).json({ error: "يرجى تقديم أو رفع الصورة المطلوب تحويلها." });
+            return res.status(400).json({ error: "يرجى توفير أو رفع ملف الصورة." });
         }
 
-        console.log("📐 [Vectorizer API] Sending request to Vectorizer.ai...");
-        
-        // تحويل الـ base64 إلى Buffer نقي لمعالجته سحابياً
+        console.log("🎨 [K-Means Palette] Extracting optimal color palette...");
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, 'base64');
+        
+        // قراءة الصورة وتقليص حجمها مؤقتاً لتسريع حسابات التجميع البكسلي اللحظي
+        const jimpImage = await Jimp.read(buffer);
+        jimpImage.scaleToFit(140, 140);
 
-        // إنشاء FormData سحابي متوافق مع Node 18+
-        const formData = new FormData();
-        const blob = new Blob([buffer], { type: 'image/png' });
-        formData.append('image', blob, 'image.png');
-
-        // ترميز الـ API Key لتمريره في الـ Basic Auth
-        const authHeader = 'Basic ' + Buffer.from(':' + finalApiKey).toString('base64');
-
-        const response = await fetch('https://vectorizer.ai/api/v1/vectorize', {
-            method: 'POST',
-            headers: {
-                'Authorization': authHeader
-            },
-            body: formData
+        const pixels = [];
+        jimpImage.scan(0, 0, jimpImage.bitmap.width, jimpImage.bitmap.height, function(x, y, idx) {
+            const r = this.bitmap.data[idx + 0];
+            const g = this.bitmap.data[idx + 1];
+            const b = this.bitmap.data[idx + 2];
+            const a = this.bitmap.data[idx + 3];
+            // تصفية وحذف الخلفيات الشفافة بالكامل من عملية الحساب اللوني
+            if (a > 30) {
+                pixels.push({ r, g, b });
+            }
         });
 
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Vectorizer.ai API Error: ${response.status} - ${errText}`);
+        if (pixels.length === 0) {
+            return res.status(400).json({ error: "الصورة فارغة أو شفافة بالكامل." });
         }
 
-        const svgString = await response.text();
-        res.setHeader('Content-Type', 'image/svg+xml');
-        res.send(svgString);
+        const kValue = Math.min(maxColors || 12, pixels.length);
+        const palette = runKMeans(pixels, kValue);
 
-    } catch (error) {
-        console.error("❌ [Vectorizer API Error]:", error.message);
-        res.status(500).json({ error: `فشل التحويل السحابي: ${error.message}` });
+        res.json({ palette });
+
+    } catch (err) {
+        console.error("❌ [Palette Error]:", err.message);
+        res.status(500).json({ error: `فشل استخراج الألوان: ${err.message}` });
     }
 });
 
-// دالة وكيل الاتصال (Custom DNS Agent) كخط دفاع نهائي ضد الـ ENOTFOUND
-const customDnsAgent = new https.Agent({
-    lookup: (hostname, options, callback) => {
-        const resolver = new dns.Resolver();
-        resolver.setServers(['8.8.8.8', '1.1.1.1']);
-        resolver.resolve4(hostname, (err, addresses) => {
-            if (err || !addresses || addresses.length === 0) {
-                return dns.lookup(hostname, options, callback);
-            }
-            callback(null, addresses[0], 4);
-        });
-    },
-    keepAlive: true
-});
-
-// دالة الإرسال لـ Hugging Face مع Retry Logic
-async function fetchImageFromHuggingFaceWithRetry(prompt, retries = 3, delay = 1000) {
-    const MODEL_ID = "black-forest-labs/FLUX.1-schnell";
-    const url = `https://api-inference.huggingface.co/models/${MODEL_ID}`;
-
-    for (let i = 1; i <= retries; i++) {
-        try {
-            console.log(`🎨 [Attempt ${i}/${retries}] Requesting image for: "${prompt}"`);
-            
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${HUGGINGFACE_TOKEN.trim()}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ inputs: prompt }),
-                agent: customDnsAgent // استخدام عميل الاتصال المؤمن بالـ DNS
-            });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`HF_API_ERROR: ${response.status} - ${errText}`);
-            }
-
-            const arrayBuffer = await response.arrayBuffer();
-            return Buffer.from(arrayBuffer);
-
-        } catch (error) {
-            console.warn(`⚠️ [Attempt ${i} Failed]: ${error.message}`);
-            if (i === retries) throw error;
-            // تأخير تصاعدي (Exponential Backoff)
-            await new Promise(resolve => setTimeout(resolve, delay * i));
-        }
-    }
+function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
 }
 
-app.post('/api/generate-image', async (req, res) => {
+app.post('/api/vectorize-local-pipeline', async (req, res) => {
     try {
-        if (!HUGGINGFACE_TOKEN) {
-            return res.status(401).json({ error: "توكن HUGGINGFACE_TOKEN غير مضاف أو مفقود في Render." });
+        const { image, palette, options } = req.body;
+        if (!image || !palette || palette.length === 0) {
+            return res.status(400).json({ error: "البيانات المدخلة أو باليتة الألوان المخصصة غير كاملة." });
         }
 
-        const { prompt } = req.body;
-        if (!prompt) {
-            return res.status(400).json({ error: "يرجى كتابة فكرة أو موجه التصميم الإعلاني." });
+        console.log(`📐 [Vectorizer Pipeline] Running color layered Potrace with ${palette.length} channels...`);
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const imgBuffer = Buffer.from(base64Data, 'base64');
+
+        const originalImage = await Jimp.read(imgBuffer);
+        
+        // خيار تنظيف ومعالجة الصورة لإزالة الضجيج البكسلي (Noise Reduction)
+        if (options && options.noiseReduction > 0) {
+            const blurRadius = Math.ceil(options.noiseReduction / 10);
+            originalImage.blur(blurRadius);
         }
 
-        // استدعاء دالة الرسم المؤمنة بالـ DNS والـ Retry
-        const buffer = await fetchImageFromHuggingFaceWithRetry(prompt);
-        const base64Image = buffer.toString('base64');
+        const width = originalImage.bitmap.width;
+        const height = originalImage.bitmap.height;
 
-        console.log("✅ تم رسم الصورة وتأمينها بنجاح وتحويلها لـ Base64 لفك تشفيرها على جوال العميل.");
-        res.json({
-            success: true,
-            imageUrl: `data:image/jpeg;base64,${base64Image}`
+        // مصفوفة لتخزين المسارات المولدة لكل طبقة لونية
+        const svgLayerPaths = [];
+        const rgbPalette = palette.map(hex => ({ hex, rgb: hexToRgb(hex), count: 0 }));
+
+        // 1. فرز وتصنيف كافة بكسلات الصورة وتوزيعها على الطبقات اللونية الأقرب لها
+        const quantizedBuffer = new Uint8Array(width * height);
+        
+        originalImage.scan(0, 0, width, height, function(x, y, idx) {
+            const r = this.bitmap.data[idx + 0];
+            const g = this.bitmap.data[idx + 1];
+            const b = this.bitmap.data[idx + 2];
+            const a = this.bitmap.data[idx + 3];
+
+            if (a < 30) {
+                quantizedBuffer[y * width + x] = 255; // شفافة
+                return;
+            }
+
+            let minDist = Infinity;
+            let closestColorIdx = 0;
+
+            for (let i = 0; i < rgbPalette.length; i++) {
+                const dist = Math.sqrt(
+                    Math.pow(r - rgbPalette[i].rgb.r, 2) +
+                    Math.pow(g - rgbPalette[i].rgb.g, 2) +
+                    Math.pow(b - rgbPalette[i].rgb.b, 2)
+                );
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestColorIdx = i;
+                }
+            }
+            quantizedBuffer[y * width + x] = closestColorIdx;
+            rgbPalette[closestColorIdx].count++; // عد البكسلات لترتيب الطبقات لاحقاً
         });
 
+        // ترتيب الطبقات تنازلياً حسب المساحة (الأكبر حجماً في الأسفل والخطوط الرفيعة والتفاصيل في الأعلى لضمان تماسك الرسم)
+        const sortedPalette = [...rgbPalette].sort((a, b) => b.count - a.count);
+
+        // 2. معالجة وتوليد مسارات Potrace لكل طبقة على حدة بشكل منفصل وموازي
+        const tracingPromises = sortedPalette.map((layer, index) => {
+            if (layer.count === 0) return Promise.resolve(null);
+
+            return new Promise(async (resolve) => {
+                // إنشاء صورة مونوكروم أحادية (أبيض وأسود) للطبقة الحالية
+                const monoImage = new Jimp(width, height, 0xFFFFFFFF);
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const pixelIdx = quantizedBuffer[y * width + x];
+                        if (pixelIdx !== 255 && rgbPalette[pixelIdx].hex === layer.hex) {
+                            monoImage.setPixelColor(0x000000FF, x, y); // بكسل نشط للرسم
+                        }
+                    }
+                }
+
+                const monoBuffer = await monoImage.getBufferAsync(Jimp.MIME_PNG);
+
+                // ضبط إعدادات الـ Potrace الدقيقة لمنع حذف التفاصيل والمنحنيات الرفيعة
+                const potraceOptions = {
+                    turdSize: options ? parseInt(options.turdSize) : 2,
+                    alphaMax: options ? parseFloat(options.alphaMax) : 1.0,
+                    turnPolicy: options ? options.turnPolicy : potrace.TurnPolicy.MINORITY,
+                    color: layer.hex
+                };
+
+                potrace.trace(monoBuffer, potraceOptions, function(err, svgString) {
+                    if (err || !svgString) {
+                        resolve(null);
+                        return;
+                    }
+                    
+                    // استخراج كود الـ Path النظيف من ملف الـ SVG الأحادي المولد
+                    const pathMatches = svgString.match(/<path[^>]*>/g);
+                    if (pathMatches) {
+                        resolve({
+                            hex: layer.hex,
+                            paths: pathMatches.join('\n')
+                        });
+                    } else {
+                        resolve(null);
+                    }
+                });
+            });
+        });
+
+        const tracedLayers = await Promise.all(tracingPromises);
+
+        // 3. دمج الطبقات اللونية بالترتيب الهندسي الصحيح في مستند SVG واحد نقي تماماً ومبسط
+        let finalPaths = '';
+        tracedLayers.forEach(layer => {
+            if (layer) {
+                finalPaths += `<!-- Layer Color: ${layer.hex} -->\n${layer.paths}\n`;
+            }
+        });
+
+        const cleanSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%">
+  <g id="sadu-vector-pipeline" shape-rendering="geometricPrecision">
+    ${finalPaths}
+  </g>
+</svg>`;
+
+        console.log("✅ [Vectorizer Pipeline] High-Fidelity multi-layer SVG compiled successfully.");
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.send(cleanSvg);
+
+    } catch (err) {
+        console.error("❌ [Pipeline Error]:", err.message);
+        res.status(500).json({ error: `فشل تتبع وتحويل الطبقات: ${err.message}` });
+    }
+});
+
+// ممر الرسام الإمبراطوري القديم والمعدل
+app.post('/api/generate-image', async (req, res) => {
+    try {
+        const { prompt } = req.body;
+        const key = process.env.GEMINI_API_KEY;
+        if (!key) return res.status(401).json({ error: "API Key مفقود في السيرفر." });
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${key}`;
+        const payload = {
+            instances: [{ prompt }],
+            parameters: { sampleCount: 1, outputMimeType: "image/jpeg", aspectRatio: "1:1", imageSize: "1K" }
+        };
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        const base64Image = result.predictions?.[0]?.bytesBase64Encoded;
+        if (!base64Image) throw new Error("لم ترجع خوادم قوقل أي صورة.");
+
+        res.json({ success: true, imageUrl: `data:image/jpeg;base64,${base64Image}` });
     } catch (error) {
-        console.error("❌ [Fatal Image Gen Error]:", error.message);
-        res.status(500).json({ error: `فشل توليد الصورة السحابية: ${error.message}` });
+        res.status(500).json({ error: error.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ [SERVER STARTED] السيرفر الإمبراطوري يعمل بثبات وأمان سحابي على منفذ ${PORT}`);
+    console.log(`🚀 [SERVER STARTED] Secure Vector Pipeline is active on port ${PORT}`);
 });
